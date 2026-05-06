@@ -1,108 +1,302 @@
+# import cv2
+# import mediapipe as mp
+# from mediapipe.tasks import python
+# from mediapipe.tasks.python import vision
+# import csv
+# import os
+
+# # -------- Configuration --------
+# MODEL_PATH = "hand_landmarker.task"
+# CSV_PATH = "pa_hand_data.csv"
+# CAMERA_INDEX = 1   # USB camera index
+
+# if not os.path.exists(MODEL_PATH):
+#     print(f"Error: {MODEL_PATH} not found.")
+#     exit()
+
+# # -------- MediaPipe Setup (TASKS ONLY) --------
+# base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+
+# options = vision.HandLandmarkerOptions(
+#     base_options=base_options,
+#     running_mode=vision.RunningMode.VIDEO,
+#     num_hands=1,
+#     min_hand_detection_confidence=0.7,
+#     min_hand_presence_confidence=0.7,
+#     min_tracking_confidence=0.7
+# )
+
+# detector = vision.HandLandmarker.create_from_options(options)
+
+# # -------- CSV Setup --------
+# file = open(CSV_PATH, mode="a", newline="")
+# writer = csv.writer(file)
+
+# if os.stat(CSV_PATH).st_size == 0:
+#     writer.writerow(["w_z", "i_z", "m_z", "r_z", "p_z", "spread", "label"])
+
+# # -------- Camera Setup --------
+# cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+
+# if not cap.isOpened():
+#     print(f"Error: Could not open USB camera at index {CAMERA_INDEX}")
+#     exit()
+
+# timestamp = 0
+
+# print(f"--- PA HAND COLLECTOR ACTIVE (USB Camera Index {CAMERA_INDEX}) ---")
+# print("R = Record RIGHT | W = Record WRONG | Q = Quit")
+
+# # -------- Hand Connections (manual) --------
+# HAND_CONNECTIONS = [
+#     (0,1),(1,2),(2,3),(3,4),
+#     (0,5),(5,6),(6,7),(7,8),
+#     (5,9),(9,10),(10,11),(11,12),
+#     (9,13),(13,14),(14,15),(15,16),
+#     (13,17),(17,18),(18,19),(19,20),
+#     (0,17)
+# ]
+
+# while cap.isOpened():
+#     ret, frame = cap.read()
+#     if not ret:
+#         print("Failed to grab frame.")
+#         break
+
+#     key = cv2.waitKey(1) & 0xFF
+
+#     frame = cv2.flip(frame, 1)
+#     h, w, _ = frame.shape
+
+#     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+#     result = detector.detect_for_video(mp_image, timestamp)
+#     timestamp += 1
+
+#     if result.hand_landmarks:
+#         for landmarks in result.hand_landmarks:
+
+#             # -------- Convert to pixel points --------
+#             pts = []
+#             for lm in landmarks:
+#                 x = int(lm.x * w)
+#                 y = int(lm.y * h)
+#                 pts.append((x, y))
+
+#             # -------- Draw connections --------
+#             for c in HAND_CONNECTIONS:
+#                 cv2.line(frame, pts[c[0]], pts[c[1]], (0, 255, 255), 2)
+
+#             # -------- Draw points --------
+#             for p in pts:
+#                 cv2.circle(frame, p, 4, (0, 0, 255), -1)
+
+#             # -------- Data Calculation --------
+#             hand_spread = abs(landmarks[2].x - landmarks[17].x)
+
+#             data_row = [
+#                 landmarks[0].z,
+#                 landmarks[8].z,
+#                 landmarks[12].z,
+#                 landmarks[16].z,
+#                 landmarks[20].z,
+#                 hand_spread
+#             ]
+
+#             # -------- Save RIGHT --------
+#             if key == ord('r'):
+#                 writer.writerow(data_row + [1])
+#                 file.flush()
+#                 print("Logged: RIGHT")
+
+#                 cv2.rectangle(frame, (0, h - 50), (w, h), (0, 255, 0), -1)
+#                 cv2.putText(frame, "SAVED: RIGHT",
+#                             (w // 2 - 90, h - 15),
+#                             cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+#                             (0, 0, 0), 2)
+
+#             # -------- Save WRONG --------
+#             elif key == ord('w'):
+#                 writer.writerow(data_row + [0])
+#                 file.flush()
+#                 print("Logged: WRONG")
+
+#                 cv2.rectangle(frame, (0, h - 50), (w, h), (0, 0, 255), -1)
+#                 cv2.putText(frame, "SAVED: WRONG",
+#                             (w // 2 - 100, h - 15),
+#                             cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+#                             (255, 255, 255), 2)
+
+#     # -------- UI --------
+#     cv2.putText(frame, "PA HAND POSITIONING GUIDE",
+#                 (10, 30),
+#                 cv2.FONT_HERSHEY_SIMPLEX,
+#                 0.7,
+#                 (255, 255, 255), 2)
+
+#     cv2.imshow("X-Ray Trainer - USB Camera", frame)
+
+#     if key == ord('q'):
+#         break
+
+# # -------- Cleanup --------
+# cap.release()
+# file.close()
+# cv2.destroyAllWindows()
 import cv2
 import mediapipe as mp
-import pandas as pd
-import numpy as np
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+import csv
+import os
+import joblib
+import time
 
-# Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    static_image_mode=False, 
-    max_num_hands=1, 
-    min_detection_confidence=0.7, 
-    min_tracking_confidence=0.7 # Helps keep skeleton stable during movement
+# -------- CONFIG --------
+MODEL_PATH = "hand_landmarker.task"
+CSV_PATH = "pa_hand_data.csv"
+ML_MODEL_PATH = "pa_hand_model.pkl"
+CAMERA_INDEX = 1  # change if needed
+
+# -------- LOAD ML MODEL --------
+if os.path.exists(ML_MODEL_PATH):
+    model = joblib.load(ML_MODEL_PATH)
+    print("✅ ML Model Loaded")
+else:
+    model = None
+    print("⚠️ No trained model found")
+
+# -------- CSV SETUP --------
+file_exists = os.path.exists(CSV_PATH)
+file = open(CSV_PATH, mode="a", newline="")
+writer = csv.writer(file)
+
+if not file_exists:
+    writer.writerow(["w_z","i_z","m_z","r_z","p_z","spread","direction","label"])
+
+# -------- MEDIAPIPE --------
+base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+
+options = vision.HandLandmarkerOptions(
+    base_options=base_options,
+    running_mode=vision.RunningMode.VIDEO,
+    num_hands=1
 )
-mp_drawing = mp.solutions.drawing_utils
 
-def run_collector():
-    cap = cv2.VideoCapture(0)
-    data = []
-    recording_state = "IDLE" # IDLE, RIGHT, WRONG
-    
-    print("KEYS: [R] - Record Right | [W] - Record Wrong | [S] - Save & Exit | [Q] - Quit")
+detector = vision.HandLandmarker.create_from_options(options)
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret: break
-        # Flip the frame for mirror view (easier for self-posing)
-        frame = cv2.flip(frame, 1) 
-        
-        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(img_rgb)
-        
-        status_color = (255, 255, 255) # Default white
-        overlay_color = (128, 128, 128) # Gray for connections
+# -------- HAND CONNECTIONS --------
+HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),
+    (0,5),(5,6),(6,7),(7,8),
+    (5,9),(9,10),(10,11),(11,12),
+    (9,13),(13,14),(14,15),(15,16),
+    (13,17),(17,18),(18,19),(19,20),
+    (0,17)
+]
 
-        if results.multi_hand_landmarks:
-            for hand_lms in results.multi_hand_landmarks:
-                
-                # --- THIS IS THE VISUAL FEEDBACK KEY ---
-                # Define drawing style based on recording status
-                if recording_state == "RIGHT":
-                    landmark_drawing_spec = mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2)
-                    connection_drawing_spec = mp_drawing.DrawingSpec(color=(0, 200, 0), thickness=2)
-                elif recording_state == "WRONG":
-                    landmark_drawing_spec = mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2)
-                    connection_drawing_spec = mp_drawing.DrawingSpec(color=(0, 0, 200), thickness=2)
+# -------- CAMERA --------
+cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+time.sleep(2)
+
+if not cap.isOpened():
+    print("❌ Camera not opening")
+    exit()
+
+print("\n🎯 CONTROLS: R=RIGHT | L=LEFT | W=WRONG | Q=QUIT\n")
+
+timestamp = 0
+
+# -------- LOOP --------
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("❌ Frame not received")
+        break
+
+    frame = cv2.flip(frame, 1)
+    h, w, _ = frame.shape
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    result = detector.detect_for_video(mp_image, timestamp)
+    timestamp += 1
+
+    key = cv2.waitKey(1) & 0xFF
+
+    if result.hand_landmarks:
+        for landmarks in result.hand_landmarks:
+
+            # -------- DRAW --------
+            for c in HAND_CONNECTIONS:
+                x1 = int(landmarks[c[0]].x * w)
+                y1 = int(landmarks[c[0]].y * h)
+                x2 = int(landmarks[c[1]].x * w)
+                y2 = int(landmarks[c[1]].y * h)
+                cv2.line(frame, (x1,y1), (x2,y2), (0,255,255), 2)
+
+            for lm in landmarks:
+                x = int(lm.x * w)
+                y = int(lm.y * h)
+                cv2.circle(frame, (x,y), 4, (0,0,255), -1)
+
+            # -------- FEATURES --------
+            spread = abs(landmarks[2].x - landmarks[17].x)
+            direction = landmarks[5].x - landmarks[17].x
+
+            data_row = [
+                landmarks[0].z,
+                landmarks[8].z,
+                landmarks[12].z,
+                landmarks[16].z,
+                landmarks[20].z,
+                spread,
+                direction
+            ]
+
+            # -------- SAVE DATA --------
+            if key == ord('r'):
+                writer.writerow(data_row + ["right"])
+                print("✅ Saved: RIGHT")
+
+            elif key == ord('l'):
+                writer.writerow(data_row + ["left"])
+                print("✅ Saved: LEFT")
+
+            elif key == ord('w'):
+                writer.writerow(data_row + ["wrong"])
+                print("❌ Saved: WRONG")
+
+            # -------- PREDICTION --------
+            if model is not None:
+                pred = model.predict([data_row])[0]
+
+                if pred == 1:
+                    label = "RIGHT"
+                    color = (0,255,0)
+                elif pred == 2:
+                    label = "LEFT"
+                    color = (255,0,0)
                 else:
-                    # Default MediaPipe rainbow style when not recording
-                    landmark_drawing_spec = mp_drawing_styles.get_default_hand_landmarks_style()
-                    connection_drawing_spec = mp_drawing_styles.get_default_hand_connections_style()
+                    label = "WRONG"
+                    color = (0,0,255)
 
-                # DRAW THE SKELETON
-                mp_drawing.draw_landmarks(
-                    frame,
-                    hand_lms,
-                    mp_hands.HAND_CONNECTIONS,
-                    landmark_drawing_spec,
-                    connection_drawing_spec
-                )
-                
-                # Save data if in a recording state
-                if recording_state in ["RIGHT", "WRONG"]:
-                    res = []
-                    for lm in hand_lms.landmark:
-                        res.extend([lm.x, lm.y, lm.z])
-                    res.append(recording_state) # Append the label
-                    data.append(res)
+                cv2.putText(frame, label, (50,100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3)
 
-        # UI Overlay
-        if recording_state == "RIGHT": status_color = (0, 255, 0) # Green
-        elif recording_state == "WRONG": status_color = (0, 0, 255) # Red
-        
-        cv2.rectangle(frame, (0, 0), (350, 110), (0,0,0), -1) # Background for text
-        cv2.putText(frame, f"REC: {recording_state}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 3)
-        cv2.putText(frame, f"Collected: {len(data)} frames", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.imshow('X-Ray Pose Trainer - Data Collection', frame)
+    # -------- UI --------
+    cv2.putText(frame, "R=RIGHT L=LEFT W=WRONG Q=QUIT",
+                (10,30), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255,255,255), 2)
 
-        # Handle Keyboard Inputs
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('r'):
-            recording_state = "RIGHT"
-        elif key == ord('w'):
-            recording_state = "WRONG"
-        elif key == ord('s'):
-            save_data(data)
-            break
-        elif key == ord('q'):
-            break
+    cv2.imshow("PA Hand AI System", frame)
 
-    cap.release()
-    cv2.destroyAllWindows()
+    if key == ord('q'):
+        break
 
-def save_data(data):
-    if not data:
-        print("No data collected.")
-        return
-    
-    # Create columns: x0, y0, z0, x1, y1, z1 ... x20, y20, z20, target
-    columns = []
-    for i in range(21):
-        columns.extend([f'x{i}', f'y{i}', f'z{i}'])
-    columns.append('target')
-    
-    df = pd.DataFrame(data, columns=columns)
-    df.to_csv('pa_hand_raw_dataset.csv', index=False)
-    print(f"Successfully saved {len(data)} samples to 'pa_hand_raw_dataset.csv'")
-
-if __name__ == "__main__":
-    run_collector()
+# -------- CLEANUP --------
+cap.release()
+file.close()
+cv2.destroyAllWindows()
