@@ -12,8 +12,6 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.7 # Helps keep skeleton stable during movement
 )
 mp_drawing = mp.solutions.drawing_utils
-# Custom styling for better visibility (optional)
-mp_drawing_styles = mp.solutions.drawing_styles
 
 def run_collector():
     cap = cv2.VideoCapture(0)
