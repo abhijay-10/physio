@@ -143,7 +143,10 @@
 # # -------- Cleanup --------
 # cap.release()
 # file.close()
-# cv2.destroyAllWindows()
+# cv2.destroyAllWindows()pa
+
+
+# 
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -155,8 +158,8 @@ import time
 
 # -------- CONFIG --------
 MODEL_PATH = "hand_landmarker.task"
-CSV_PATH = "pa_hand_data.csv"
-ML_MODEL_PATH = "pa_hand_model.pkl"
+CSV_PATH = "oblique_data.csv"
+ML_MODEL_PATH = "oblique_model.pkl"
 CAMERA_INDEX = 1  # change if needed
 
 # -------- LOAD ML MODEL --------

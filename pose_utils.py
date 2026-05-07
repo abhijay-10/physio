@@ -1,4 +1,5 @@
 import numpy as np
+MODEL_PATH = "D:\\physio\\obliquehand\\hand_landmarker.task"
 
 def calculate_angle(a, b, c):
     """
